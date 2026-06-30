@@ -1,0 +1,2 @@
+This is a clean test file number 9. It contains legitimate data for testing purposes.
+Additional content in clean file 9

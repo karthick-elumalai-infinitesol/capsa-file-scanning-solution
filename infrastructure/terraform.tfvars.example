@@ -1,0 +1,42 @@
+# CAPSA — OpenSecOps Analyzer
+# Copy this file to terraform.tfvars and fill in your values
+
+aws_region  = "us-east-1"
+environment = "prod"
+
+# Jira Cloud Configuration
+jira_url         = "https://your-company.atlassian.net"
+jira_username    = "security-bot@your-company.com"
+jira_api_token   = "your-jira-api-token"
+jira_project_key = "SEC"
+
+# Alerting
+alert_email       = "security-team@your-company.com"
+slack_webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# ClamAV ECS Fargate
+clamav_image  = "clamav/clamav:1.5.2-debian13-slim"
+clamav_port   = 3310
+clamav_cpu    = 1024
+clamav_memory = 2048
+
+# Lambda
+lambda_timeout = 300
+lambda_memory  = 1024
+
+# VPC (empty = use default VPC)
+vpc_id             = ""
+subnet_ids         = []
+route_table_ids    = []
+security_group_ids = []
+ecs_assign_public_ip = true
+
+# GuardDuty
+guardduty_findings_lookback_minutes = 60
+
+# Report schedules (UTC)
+report_schedule_daily  = "cron(0 1 * * ? *)"
+report_schedule_weekly = "cron(0 2 ? * SUN *)"
+
+# Redis URL (for scan_trigger Lambda → ECS Redis)
+redis_url = "redis://redis.capsa.internal:6379/0"

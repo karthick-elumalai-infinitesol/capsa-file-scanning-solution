@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CAPSA Healthcare - File Scan Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">C</div>
+        <div>
+          <h2>CAPSA</h2>
+          <p>Healthcare Security</p>
+        </div>
+      </div>
+
+      <nav>
+        <a class="active">File Scanning</a>
+        <a>AWS Buckets</a>
+        <a>Quarantine Review</a>
+        <a>Security Hub</a>
+        <a>Reports</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <p>Enterprise Migration Gate</p>
+        <span>{{ aws_region }}</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Enterprise AWS File Security</p>
+          <h1>File Scan Performance Dashboard</h1>
+          <p class="hero-copy">
+            Visualize large-file scanning, staging-to-clean/quarantine routing,
+            performance duration, throughput, and operational readiness for CAPSA Healthcare migrations.
+          </p>
+        </div>
+
+        <div class="hero-actions">
+          <button onclick="startEnterpriseScan()">Run 5 × 100 MB Test</button>
+          <button class="secondary" onclick="refreshDashboard()">Refresh</button>
+        </div>
+      </section>
+
+      <section class="meta-strip">
+        <div>
+          <span>AWS Account</span>
+          <strong>{{ aws_account_id }}</strong>
+        </div>
+        <div>
+          <span>Region</span>
+          <strong>{{ aws_region }}</strong>
+        </div>
+        <div>
+          <span>Default Command</span>
+          <strong>FILE_COUNT=5 FILE_SIZE_MB=100</strong>
+        </div>
+      </section>
+
+      <section class="cards">
+        <div class="card">
+          <span>Total Runs</span>
+          <strong id="totalRuns">0</strong>
+          <p>Performance executions</p>
+        </div>
+        <div class="card">
+          <span>Total Files</span>
+          <strong id="totalFiles">0</strong>
+          <p>Clean + malware files submitted</p>
+        </div>
+        <div class="card">
+          <span>Total Data</span>
+          <strong id="totalSize">0 MB</strong>
+          <p>Combined test volume</p>
+        </div>
+        <div class="card">
+          <span>Avg Duration</span>
+          <strong id="avgDuration">0 sec</strong>
+          <p>Completed runs only</p>
+        </div>
+        <div class="card">
+          <span>Throughput</span>
+          <strong id="throughput">0 MB/min</strong>
+          <p>Scanner processing rate</p>
+        </div>
+      </section>
+
+      <section class="scan-flow">
+        <h2>File Scanning Flow</h2>
+        <div class="flow-grid">
+          <div class="flow-node">
+            <div class="node-icon upload">1</div>
+            <h3>Staging Bucket</h3>
+            <p>Large validation files land in the isolated staging zone.</p>
+            <span>capsa-staging</span>
+          </div>
+          <div class="connector"></div>
+          <div class="flow-node">
+            <div class="node-icon scanner">2</div>
+            <h3>Scanner Engine</h3>
+            <p>Lambda, Redis queue, ECS worker, and ClamAV scan every file.</p>
+            <span>ClamAV on ECS</span>
+          </div>
+          <div class="connector"></div>
+          <div class="flow-node">
+            <div class="node-icon clean">3</div>
+            <h3>Clean / Quarantine</h3>
+            <p>Clean files are promoted. Infected files are preserved for review.</p>
+            <span>clean + quarantine</span>
+          </div>
+          <div class="connector"></div>
+          <div class="flow-node">
+            <div class="node-icon report">4</div>
+            <h3>Reports</h3>
+            <p>Evidence, timings, logs, and routing results are captured.</p>
+            <span>audit-ready evidence</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="charts-grid">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Run Duration Trend</h2>
+            <p>Duration in seconds per performance test run.</p>
+          </div>
+          <canvas id="durationChart"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Status Distribution</h2>
+            <p>Completed, failed, timeout, queued, and running split.</p>
+          </div>
+          <canvas id="statusChart"></canvas>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header split">
+          <div>
+            <h2>Performance Run History</h2>
+            <p>Latest test executions and command visibility.</p>
+          </div>
+          <div class="command-pill">
+            FILE_COUNT=5 FILE_SIZE_MB=100 WAIT_TIMEOUT_SECONDS=1800 ./scripts/performance_large_scan_aws.sh
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Status</th>
+                <th>Files</th>
+                <th>Size/File</th>
+                <th>Total MB</th>
+                <th>Duration</th>
+                <th>Started</th>
+                <th>Completed</th>
+                <th>Return</th>
+              </tr>
+            </thead>
+            <tbody id="runsTable"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Latest Execution Logs</h2>
+          <p>Operational output for team demo and troubleshooting.</p>
+        </div>
+        <pre id="latestLogs">No run logs available yet.</pre>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
