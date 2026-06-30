@@ -1,0 +1,29 @@
+
+# Local environment/secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.venv*/
+
+# Terraform local/generated files
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan*
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Terraform/local generated Lambda artifacts
+infrastructure/modules/lambda/*.zip
+infrastructure/modules/lambda/redis_layer/
+
+# Scan/test outputs
+scan_results/
