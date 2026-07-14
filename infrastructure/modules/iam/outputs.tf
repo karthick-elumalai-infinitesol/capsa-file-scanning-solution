@@ -48,6 +48,16 @@ output "ecs_task_role_name" {
   description = "Name of ECS task role"
 }
 
+output "sftpgo_role_arn" {
+  value       = aws_iam_role.sftpgo.arn
+  description = "ARN of SFTPGo ECS task role"
+}
+
+output "sftpgo_role_name" {
+  value       = aws_iam_role.sftpgo.name
+  description = "Name of SFTPGo ECS task role"
+}
+
 output "migration_team_role_arn" {
   value       = aws_iam_role.migration_team.arn
   description = "ARN of migration team IAM role"

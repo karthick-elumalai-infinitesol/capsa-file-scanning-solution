@@ -1,131 +1,133 @@
-let durationChart = null;
-let statusChart = null;
-
-function secondsLabel(value) {
-  const numeric = Number(value || 0);
-  if (numeric <= 0) return "0 sec";
-  if (numeric < 60) return `${numeric} sec`;
-  return `${Math.round(numeric / 60)} min`;
+function bytesLabel(bytes) {
+  if (!bytes || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-function statusBadge(status) {
-  return `<span class="badge ${status}">${status}</span>`;
-}
-
-async function startEnterpriseScan() {
-  const confirmed = confirm("Start a 5 × 100 MB enterprise performance scan? This uploads large AWS S3 test files.");
-  if (!confirmed) return;
-
-  const response = await fetch("/api/start-scan", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      file_count: 5,
-      file_size_mb: 100,
-      wait_timeout_seconds: 1800,
-      poll_seconds: 10
-    })
-  });
-
-  const data = await response.json();
-  alert(`Enterprise scan started. Run ID: ${data.run_id}`);
-  refreshDashboard();
+function switchTab(name) {
+  document.querySelectorAll(".tab-btn").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(t => t.classList.remove("active"));
+  document.querySelector(`.tab-btn[onclick*="${name}"]`).classList.add("active");
+  document.getElementById(`panel-${name}`).classList.add("active");
 }
 
 async function refreshDashboard() {
-  const response = await fetch("/api/scan-runs");
-  const data = await response.json();
-  const metrics = data.metrics;
-  const runs = data.runs;
+  try {
+    const [bucketResp, quarantineResp] = await Promise.all([
+      fetch("/api/aws/buckets").then(r => r.json()),
+      fetch("/api/aws/quarantine-files?max_items=50").then(r => r.json()),
+    ]);
 
-  document.getElementById("totalRuns").innerText = metrics.total_runs;
-  document.getElementById("totalFiles").innerText = metrics.total_files;
-  document.getElementById("totalSize").innerText = `${metrics.total_size_mb} MB`;
-  document.getElementById("avgDuration").innerText = secondsLabel(metrics.avg_duration_seconds);
-  document.getElementById("throughput").innerText = `${metrics.throughput_mb_per_min} MB/min`;
+    const buckets = bucketResp.buckets;
+    const quarantine = quarantineResp;
 
-  renderTable(runs);
-  renderLogs(runs);
-  renderCharts(runs);
-}
+    if (buckets.staging) {
+      document.getElementById("stagingCount").innerText = buckets.staging.object_count;
+      document.getElementById("stagingSize").innerText = bytesLabel(buckets.staging.size_bytes);
+    }
+    if (buckets.clean) {
+      document.getElementById("cleanCount").innerText = buckets.clean.object_count;
+      document.getElementById("cleanSize").innerText = bytesLabel(buckets.clean.size_bytes);
+    }
+    if (buckets.quarantine) {
+      document.getElementById("quarantineCount").innerText = buckets.quarantine.object_count;
+      document.getElementById("quarantineSize").innerText = bytesLabel(buckets.quarantine.size_bytes);
+    }
 
-function renderTable(runs) {
-  const table = document.getElementById("runsTable");
-  table.innerHTML = "";
+    const staging = buckets.staging?.object_count || 0;
+    const clean = buckets.clean?.object_count || 0;
+    const q = buckets.quarantine?.object_count || 0;
+    document.getElementById("totalProcessed").innerText = clean + q;
+    document.getElementById("totalThreats").innerText = q;
+    document.getElementById("throughputRate").innerText = `${q + clean} total files processed`;
 
-  if (!runs || runs.length === 0) {
-    table.innerHTML = `<tr><td colspan="9">No scan runs yet. Click "Run 5 × 100 MB Test".</td></tr>`;
-    return;
+    renderQuarantineTable(quarantine);
+  } catch (e) {
+    console.error("Refresh failed:", e);
   }
 
-  for (const run of runs) {
-    table.innerHTML += `
-      <tr>
-        <td>${run.run_id}</td>
-        <td>${statusBadge(run.status)}</td>
-        <td>${Number(run.file_count || 0) * 2}</td>
-        <td>${run.file_size_mb} MB</td>
-        <td>${run.total_size_mb} MB</td>
-        <td>${secondsLabel(run.duration_seconds)}</td>
-        <td>${run.started_at}</td>
-        <td>${run.completed_at}</td>
-        <td>${run.return_code === null ? "-" : run.return_code}</td>
+  refreshSftpStatus();
+  refreshSftpUsers();
+}
+
+async function refreshSftpStatus() {
+  try {
+    const r = await fetch("/api/sftp/status");
+    const data = await r.json();
+    if (data.status === "online") {
+      document.getElementById("sftpStatusText").innerText = "Online";
+      document.getElementById("sftpStatusText").style.color = "#16a34a";
+      document.getElementById("sftpVersion").innerText = `v${data.version} · ${data.active_connections} active connections`;
+      document.getElementById("activePartners").innerText = data.total_users;
+      document.getElementById("healthSftp").innerText = `v${data.version} · Online`;
+    } else {
+      document.getElementById("sftpStatusText").innerText = "Offline";
+      document.getElementById("sftpStatusText").style.color = "#dc2626";
+      document.getElementById("sftpVersion").innerText = "Unreachable";
+    }
+  } catch (e) {
+    document.getElementById("sftpStatusText").innerText = "Offline";
+    document.getElementById("sftpStatusText").style.color = "#dc2626";
+    document.getElementById("sftpVersion").innerText = "Connection error";
+  }
+}
+
+async function refreshSftpUsers() {
+  try {
+    const r = await fetch("/api/sftp/users");
+    const data = await r.json();
+    const table = document.getElementById("sftpUsersTable");
+    if (!table) return;
+    table.innerHTML = "";
+    if (!data.users || data.users.length === 0) {
+      table.innerHTML = `<tr><td colspan="6">No partners provisioned.</td></tr>`;
+      return;
+    }
+    for (const u of data.users) {
+      const keys = u.public_keys ? u.public_keys.length : 0;
+      const s3config = u.filesystem?.s3config || {};
+      const company = (u.username || "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      table.innerHTML += `<tr>
+        <td><code>${u.username}</code></td>
+        <td><strong>${company}</strong></td>
+        <td>${u.home_dir || "/"}</td>
+        <td>s3://${s3config.bucket || "-"}/${s3config.key_prefix || ""}</td>
+        <td>${keys} SSH key${keys !== 1 ? 's' : ''} ${u.has_password ? '+ password' : ''}</td>
+        <td><span class="badge ACTIVE">Active</span></td>
       </tr>`;
+    }
+  } catch (e) {
+    const table = document.getElementById("sftpUsersTable");
+    if (table) table.innerHTML = `<tr><td colspan="6">Error loading partners.</td></tr>`;
   }
 }
 
-function renderLogs(runs) {
-  const logs = document.getElementById("latestLogs");
-  if (!runs || runs.length === 0) {
-    logs.innerText = "No run logs available yet.";
+function renderQuarantineTable(quarantine) {
+  const table = document.getElementById("quarantineTable");
+  if (!table) return;
+  table.innerHTML = "";
+  if (!quarantine || !quarantine.files || quarantine.files.length === 0) {
+    table.innerHTML = `<tr><td colspan="7">No threats detected. All files clean.</td></tr>`;
     return;
   }
-
-  const latest = runs[0];
-  logs.innerText = `
-Run ID: ${latest.run_id}
-Status: ${latest.status}
-Command: FILE_COUNT=${latest.file_count} FILE_SIZE_MB=${latest.file_size_mb} WAIT_TIMEOUT_SECONDS=${latest.wait_timeout_seconds} POLL_SECONDS=${latest.poll_seconds} ./scripts/performance_large_scan_aws.sh
-
-STDOUT:
-${latest.stdout || "-"}
-
-STDERR:
-${latest.stderr || "-"}
-`.trim();
-}
-
-function renderCharts(runs) {
-  const sortedRuns = [...(runs || [])].reverse();
-  const labels = sortedRuns.map((run) => run.run_id);
-  const durations = sortedRuns.map((run) => Number(run.duration_seconds || 0));
-
-  const statusCounts = { COMPLETED: 0, RUNNING: 0, QUEUED: 0, FAILED: 0, TIMEOUT: 0 };
-  for (const run of runs || []) {
-    if (statusCounts[run.status] === undefined) statusCounts[run.status] = 0;
-    statusCounts[run.status] += 1;
+  for (const file of quarantine.files) {
+    const tags = file.tags || {};
+    const threat = tags["scan:threat-name"] || "UNKNOWN";
+    const company = tags["source:company"] || "UNKNOWN";
+    const batch = tags["migration:batch-id"] || "-";
+    const review = tags["review:status"] || "PENDING";
+    const date = file.last_modified ? file.last_modified.slice(0, 19).replace("T", " ") : "-";
+    table.innerHTML += `<tr>
+      <td title="${file.key}">${file.key.split("/").pop()}</td>
+      <td>${bytesLabel(file.size)}</td>
+      <td><span class="badge INFECTED">${threat}</span></td>
+      <td>${company}</td>
+      <td>${batch}</td>
+      <td><span class="badge ${review}">${review}</span></td>
+      <td>${date}</td>
+    </tr>`;
   }
-
-  if (durationChart) durationChart.destroy();
-  if (statusChart) statusChart.destroy();
-
-  durationChart = new Chart(document.getElementById("durationChart"), {
-    type: "line",
-    data: {
-      labels,
-      datasets: [{ label: "Duration Seconds", data: durations, tension: 0.35, borderWidth: 3 }]
-    },
-    options: { responsive: true, plugins: { legend: { display: true } } }
-  });
-
-  statusChart = new Chart(document.getElementById("statusChart"), {
-    type: "doughnut",
-    data: {
-      labels: Object.keys(statusCounts),
-      datasets: [{ label: "Run Status", data: Object.values(statusCounts) }]
-    },
-    options: { responsive: true }
-  });
 }
 
 refreshDashboard();

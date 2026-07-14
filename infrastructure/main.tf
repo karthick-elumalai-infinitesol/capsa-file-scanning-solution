@@ -72,12 +72,13 @@ module "networking" {
 module "security" {
   source = "./modules/security"
 
-  environment      = var.environment
-  bucket_names     = module.naming.s3_bucket
-  kms_alias_names  = module.naming.kms_alias
-  sns_topic_arn    = aws_sns_topic.security_alerts.arn
-  aws_account_id   = local.account_id
-  guardduty_enable = true
+  environment           = var.environment
+  bucket_names          = module.naming.s3_bucket
+  kms_alias_names       = module.naming.kms_alias
+  sns_topic_arn         = aws_sns_topic.security_alerts.arn
+  aws_account_id        = local.account_id
+  guardduty_enable      = true
+  sftpgo_admin_password = var.sftpgo_admin_password
 }
 
 # ── S3 Buckets ────────────────────────────────────────────────────────────
@@ -184,7 +185,15 @@ resource "aws_cloudtrail" "main" {
   }
 }
 
-# ── ECS (ClamAV + Redis + Queue Worker) ──────────────────────────────────
+# ── SNS Email Subscriptions ─────────────────────────────────────────────
+
+resource "aws_sns_topic_subscription" "security_alerts_email" {
+  topic_arn = aws_sns_topic.security_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# ── ECS (ClamAV + Redis + Queue Worker + SFTPGo) ─────────────────────────
 
 module "ecs" {
   source = "./modules/ecs"
@@ -209,6 +218,14 @@ module "ecs" {
   clamav_dns_name                = module.networking.clamav_dns_name
   aws_region                     = var.aws_region
   routing_function_name          = module.lambda.routing_engine_function_name
+
+  # SFTPGo additions
+  sftpgo_sg_id                = module.networking.sftpgo_service_sg_id
+  service_discovery_sftpgo_id = module.networking.service_discovery_sftpgo_id
+  sftpgo_dns_name             = module.networking.sftpgo_dns_name
+  staging_bucket_name         = module.s3.staging_bucket_id
+  sftpgo_task_role_arn        = module.iam.sftpgo_role_arn
+  aws_account_id              = local.account_id
 }
 
 # ── Monitoring (Alarms, EventBridge) ─────────────────────────────────────

@@ -141,3 +141,9 @@ variable "redis_url" {
   type        = string
   default     = "redis://redis.capsa.internal:6379/0"
 }
+
+variable "sftpgo_admin_password" {
+  description = "SFTPGo admin password (stored in Secrets Manager)"
+  type        = string
+  sensitive   = true
+}

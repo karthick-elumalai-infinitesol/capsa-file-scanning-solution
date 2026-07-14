@@ -162,6 +162,46 @@ resource "aws_security_group_rule" "vpc_endpoints_ingress_from_ecs" {
   description              = "HTTPS from ECS tasks to AWS PrivateLink endpoints"
 }
 
+resource "aws_security_group_rule" "vpc_endpoints_ingress_from_redis" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.redis_service.id
+  security_group_id        = aws_security_group.vpc_endpoints.id
+  description              = "HTTPS from Redis ECS task to AWS PrivateLink endpoints"
+}
+
+resource "aws_security_group_rule" "vpc_endpoints_ingress_from_sftpgo" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.sftpgo_service.id
+  security_group_id        = aws_security_group.vpc_endpoints.id
+  description              = "HTTPS from SFTPGo ECS task to AWS PrivateLink endpoints"
+}
+
+resource "aws_security_group_rule" "redis_endpoint_https_egress" {
+  type                     = "egress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.vpc_endpoints.id
+  security_group_id        = aws_security_group.redis_service.id
+  description              = "Outbound HTTPS from Redis ECS task to AWS PrivateLink endpoints"
+}
+
+resource "aws_security_group_rule" "sftpgo_endpoint_https_egress" {
+  type                     = "egress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.vpc_endpoints.id
+  security_group_id        = aws_security_group.sftpgo_service.id
+  description              = "Outbound HTTPS from SFTPGo ECS task to AWS PrivateLink endpoints"
+}
+
 resource "aws_security_group_rule" "vpc_endpoints_egress" {
   type              = "egress"
   from_port         = 0
@@ -234,6 +274,8 @@ resource "aws_vpc_endpoint" "interface" {
     "secretsmanager",
     "ecr.api",
     "ecr.dkr",
+    "lambda",
+    "sts",
   ])
 
   vpc_id              = local.vpc_id
@@ -259,6 +301,60 @@ resource "aws_service_discovery_private_dns_namespace" "capsa" {
 
 resource "aws_service_discovery_service" "redis" {
   name = "redis"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.capsa.id
+
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+}
+
+resource "aws_security_group" "sftpgo_service" {
+  name_prefix = "capsa-sftpgo-sg-"
+  description = "Security group for SFTPGo ECS service"
+  vpc_id      = local.vpc_id
+
+  ingress {
+    from_port   = var.sftpgo_port
+    to_port     = var.sftpgo_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "SFTP from internet"
+  }
+
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = var.vpc_id == "" ? ["0.0.0.0/0"] : []
+    description = "SFTPGo REST API (internal only in production)"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "All outbound traffic"
+  }
+
+  tags = {
+    Name        = "capsa-sftpgo-service-sg"
+    Environment = var.environment
+  }
+}
+
+resource "aws_service_discovery_service" "sftpgo" {
+  name = "sftpgo"
 
   dns_config {
     namespace_id = aws_service_discovery_private_dns_namespace.capsa.id

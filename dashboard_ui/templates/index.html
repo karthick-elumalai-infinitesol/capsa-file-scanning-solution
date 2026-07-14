@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CAPSA Healthcare - File Scan Dashboard</title>
+  <title>CAPSA - File Scan Operations Dashboard</title>
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -14,20 +14,16 @@
         <div class="brand-icon">C</div>
         <div>
           <h2>CAPSA</h2>
-          <p>Healthcare Security</p>
+          <p>File Security</p>
         </div>
       </div>
-
       <nav>
-        <a class="active">File Scanning</a>
-        <a>AWS Buckets</a>
-        <a>Quarantine Review</a>
-        <a>Security Hub</a>
-        <a>Reports</a>
+        <a class="active">Dashboard</a>
+        <a>Quarantine</a>
+        <a>Partners</a>
       </nav>
-
       <div class="sidebar-footer">
-        <p>Enterprise Migration Gate</p>
+        <p>{{ aws_account_id }}</p>
         <span>{{ aws_region }}</span>
       </div>
     </aside>
@@ -35,150 +31,188 @@
     <main class="main">
       <section class="hero">
         <div>
-          <p class="eyebrow">Enterprise AWS File Security</p>
-          <h1>File Scan Performance Dashboard</h1>
+          <p class="eyebrow">Live Pipeline Status</p>
+          <h1>Enterprise File Scan Operations</h1>
           <p class="hero-copy">
-            Visualize large-file scanning, staging-to-clean/quarantine routing,
-            performance duration, throughput, and operational readiness for CAPSA Healthcare migrations.
+            Automated file scanning pipeline: SFTP upload &rarr; ClamAV scan &rarr; Smart routing to clean or quarantine.
+            Files flow through real-time at <span id="throughputRate">-</span>.
           </p>
         </div>
-
         <div class="hero-actions">
-          <button onclick="startEnterpriseScan()">Run 5 × 100 MB Test</button>
-          <button class="secondary" onclick="refreshDashboard()">Refresh</button>
+          <button class="secondary" onclick="refreshDashboard()">Refresh Now</button>
         </div>
       </section>
 
-      <section class="meta-strip">
-        <div>
-          <span>AWS Account</span>
-          <strong>{{ aws_account_id }}</strong>
+      <section class="cards big-cards">
+        <div class="card card-staging">
+          <div class="card-icon staging-icon">S</div>
+          <div>
+            <span>Staging (Incoming)</span>
+            <strong id="stagingCount">-</strong>
+            <p id="stagingSize">-</p>
+          </div>
         </div>
-        <div>
-          <span>Region</span>
-          <strong>{{ aws_region }}</strong>
+        <div class="card card-clean">
+          <div class="card-icon clean-icon">C</div>
+          <div>
+            <span>Clean Bucket</span>
+            <strong id="cleanCount">-</strong>
+            <p id="cleanSize">-</p>
+          </div>
         </div>
-        <div>
-          <span>Default Command</span>
-          <strong>FILE_COUNT=5 FILE_SIZE_MB=100</strong>
+        <div class="card card-quarantine">
+          <div class="card-icon quarantine-icon">Q</div>
+          <div>
+            <span>Quarantine</span>
+            <strong id="quarantineCount">-</strong>
+            <p id="quarantineSize">-</p>
+          </div>
         </div>
-      </section>
-
-      <section class="cards">
-        <div class="card">
-          <span>Total Runs</span>
-          <strong id="totalRuns">0</strong>
-          <p>Performance executions</p>
-        </div>
-        <div class="card">
-          <span>Total Files</span>
-          <strong id="totalFiles">0</strong>
-          <p>Clean + malware files submitted</p>
-        </div>
-        <div class="card">
-          <span>Total Data</span>
-          <strong id="totalSize">0 MB</strong>
-          <p>Combined test volume</p>
-        </div>
-        <div class="card">
-          <span>Avg Duration</span>
-          <strong id="avgDuration">0 sec</strong>
-          <p>Completed runs only</p>
-        </div>
-        <div class="card">
-          <span>Throughput</span>
-          <strong id="throughput">0 MB/min</strong>
-          <p>Scanner processing rate</p>
+        <div class="card card-sftp-big">
+          <div class="card-icon sftp-icon">S</div>
+          <div>
+            <span>SFTP Server</span>
+            <strong id="sftpStatusText">-</strong>
+            <p id="sftpVersion">-</p>
+          </div>
         </div>
       </section>
 
-      <section class="scan-flow">
-        <h2>File Scanning Flow</h2>
+      <section class="cards stats-row">
+        <div class="stat-box">
+          <span>Active Partners</span>
+          <strong id="activePartners">0</strong>
+        </div>
+        <div class="stat-box">
+          <span>Files Processed</span>
+          <strong id="totalProcessed">-</strong>
+        </div>
+        <div class="stat-box">
+          <span>Threats Detected</span>
+          <strong id="totalThreats" class="threat-number">-</strong>
+        </div>
+        <div class="stat-box">
+          <span>Pipeline Status</span>
+          <strong id="pipelineStatus" style="color:#16a34a">Operational</strong>
+        </div>
+      </section>
+
+      <section class="flow-section">
+        <h2>Scan Pipeline</h2>
         <div class="flow-grid">
           <div class="flow-node">
             <div class="node-icon upload">1</div>
-            <h3>Staging Bucket</h3>
-            <p>Large validation files land in the isolated staging zone.</p>
-            <span>capsa-staging</span>
+            <h3>SFTP Upload</h3>
+            <p>Partners upload files via SFTPGo (port 2022) to S3 staging.</p>
+            <span class="flow-tag">s3://capsa-staging</span>
           </div>
           <div class="connector"></div>
           <div class="flow-node">
             <div class="node-icon scanner">2</div>
-            <h3>Scanner Engine</h3>
-            <p>Lambda, Redis queue, ECS worker, and ClamAV scan every file.</p>
-            <span>ClamAV on ECS</span>
+            <h3>ClamAV Scan</h3>
+            <p>S3 event triggers Lambda &rarr; Redis queue &rarr; ECS worker runs ClamAV.</p>
+            <span class="flow-tag">clamd stream</span>
           </div>
           <div class="connector"></div>
           <div class="flow-node">
-            <div class="node-icon clean">3</div>
-            <h3>Clean / Quarantine</h3>
-            <p>Clean files are promoted. Infected files are preserved for review.</p>
-            <span>clean + quarantine</span>
+            <div class="node-icon route">3</div>
+            <h3>Routing Engine</h3>
+            <p>Clean files &rarr; clean bucket. Infected &rarr; quarantine with Object Lock.</p>
+            <span class="flow-tag">HIPAA Compliant</span>
           </div>
           <div class="connector"></div>
           <div class="flow-node">
             <div class="node-icon report">4</div>
-            <h3>Reports</h3>
-            <p>Evidence, timings, logs, and routing results are captured.</p>
-            <span>audit-ready evidence</span>
+            <h3>Alerts &amp; Reports</h3>
+            <p>SNS email alerts for threats, daily CSV reports to operations.</p>
+            <span class="flow-tag">Audit-Ready</span>
           </div>
         </div>
       </section>
 
-      <section class="charts-grid">
-        <div class="panel">
+      <section class="tab-section">
+        <div class="tab-header">
+          <h2>Quarantine &amp; Partner Activity</h2>
+          <div class="tab-buttons">
+            <button class="tab-btn active" onclick="switchTab('quarantine')">Threats Detected</button>
+            <button class="tab-btn" onclick="switchTab('partners')">SFTP Partners</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="tab-panel active" id="panel-quarantine">
+        <section class="panel">
           <div class="panel-header">
-            <h2>Run Duration Trend</h2>
-            <p>Duration in seconds per performance test run.</p>
+            <h2>Quarantined Files</h2>
+            <p>Files flagged as threats by ClamAV, awaiting review.</p>
           </div>
-          <canvas id="durationChart"></canvas>
-        </div>
-        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Size</th>
+                  <th>Threat</th>
+                  <th>Partner</th>
+                  <th>Batch</th>
+                  <th>Status</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody id="quarantineTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div class="tab-panel" id="panel-partners">
+        <section class="panel">
           <div class="panel-header">
-            <h2>Status Distribution</h2>
-            <p>Completed, failed, timeout, queued, and running split.</p>
+            <h2>Connected Partners</h2>
+            <p>M&A companies with active SFTP access for file migration.</p>
           </div>
-          <canvas id="statusChart"></canvas>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-header split">
-          <div>
-            <h2>Performance Run History</h2>
-            <p>Latest test executions and command visibility.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Company</th>
+                  <th>Home Dir</th>
+                  <th>S3 Prefix</th>
+                  <th>Auth</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="sftpUsersTable"></tbody>
+            </table>
           </div>
-          <div class="command-pill">
-            FILE_COUNT=5 FILE_SIZE_MB=100 WAIT_TIMEOUT_SECONDS=1800 ./scripts/performance_large_scan_aws.sh
+        </section>
+      </div>
+
+      <section class="scan-flow compact-flow">
+        <h2>System Health</h2>
+        <div class="flow-grid health-grid">
+          <div class="health-item">
+            <span class="health-label">SFTPGo API</span>
+            <span class="health-dot online"></span>
+            <span class="health-status" id="healthSftp">Checking...</span>
+          </div>
+          <div class="health-item">
+            <span class="health-label">S3 Staging</span>
+            <span class="health-dot online"></span>
+            <span class="health-status" id="healthStaging">Online</span>
+          </div>
+          <div class="health-item">
+            <span class="health-label">ClamAV</span>
+            <span class="health-dot online"></span>
+            <span class="health-status" id="healthClamav">Active</span>
+          </div>
+          <div class="health-item">
+            <span class="health-label">SNS Alerts</span>
+            <span class="health-dot online"></span>
+            <span class="health-status" id="healthSns">Active</span>
           </div>
         </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>Status</th>
-                <th>Files</th>
-                <th>Size/File</th>
-                <th>Total MB</th>
-                <th>Duration</th>
-                <th>Started</th>
-                <th>Completed</th>
-                <th>Return</th>
-              </tr>
-            </thead>
-            <tbody id="runsTable"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Latest Execution Logs</h2>
-          <p>Operational output for team demo and troubleshooting.</p>
-        </div>
-        <pre id="latestLogs">No run logs available yet.</pre>
       </section>
     </main>
   </div>

@@ -48,6 +48,21 @@ output "clamav_dns_name" {
   description = "DNS name for ClamAV service discovery"
 }
 
+output "sftpgo_service_sg_id" {
+  value       = aws_security_group.sftpgo_service.id
+  description = "Security group ID for SFTPGo service"
+}
+
+output "service_discovery_sftpgo_id" {
+  value       = aws_service_discovery_service.sftpgo.arn
+  description = "Service discovery service ARN for SFTPGo"
+}
+
+output "sftpgo_dns_name" {
+  value       = "${aws_service_discovery_service.sftpgo.name}.${aws_service_discovery_private_dns_namespace.capsa.name}"
+  description = "DNS name for SFTPGo service discovery"
+}
+
 output "security_group_ids" {
   value       = concat([aws_security_group.lambda_to_clamav.id], var.security_group_ids)
   description = "Complete list of security group IDs for Lambda functions"

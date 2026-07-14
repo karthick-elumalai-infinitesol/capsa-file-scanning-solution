@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     aws_region: str = os.getenv("AWS_REGION", "us-east-1")
     aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    aws_session_token: str = os.getenv("AWS_SESSION_TOKEN", "")
     s3_bucket: str = os.getenv("S3_BUCKET", "opensecops-analyzer")
 
     # AWS Enterprise Integrations

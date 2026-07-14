@@ -1,3 +1,4 @@
+locals {
   # Construct Lambda ARN from function name to avoid circular deps
   routing_lambda_arn       = "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:${var.function_names["routing"]}"
   capsa_lambda_arn_pattern = "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:${var.function_names["routing"]}"
@@ -400,6 +401,23 @@ resource "aws_iam_role_policy" "ecs_task_execution_ecr" {
   })
 }
 
+resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
+  name = "${var.role_names["ecs_execution"]}-secrets-policy"
+  role = aws_iam_role.ecs_task_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "SecretsManagerRead"
+      Effect = "Allow"
+      Action = [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+      ]
+      Resource = ["arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:capsa/*"]
+    }]
+  })
+}
+
 # ============================================================================
 # ECS Task Role (for ClamAV + Queue Worker in ECS)
 # ============================================================================
@@ -433,8 +451,12 @@ data "aws_iam_policy_document" "ecs_task" {
     actions = [
       "s3:GetObject",
       "s3:GetObjectVersion",
+      "s3:ListBucket",
     ]
-    resources = ["${var.staging_bucket_arn}/*"]
+    resources = [
+      "${var.staging_bucket_arn}",
+      "${var.staging_bucket_arn}/*",
+    ]
   }
 
   statement {
@@ -511,6 +533,71 @@ resource "aws_iam_role" "migration_team" {
   tags = {
     Name        = "capsa-migration-team"
     Environment = var.environment
+  }
+}
+
+# ============================================================================
+# SFTPGo ECS Task Role — writes partner uploads to staging bucket
+# ============================================================================
+
+resource "aws_iam_role" "sftpgo" {
+  name = var.role_names["sftpgo"]
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+  tags = {
+    Name        = var.role_names["sftpgo"]
+    Environment = var.environment
+  }
+}
+
+resource "aws_iam_role_policy" "sftpgo" {
+  name   = "${var.role_names["sftpgo"]}-policy"
+  role   = aws_iam_role.sftpgo.id
+  policy = data.aws_iam_policy_document.sftpgo.json
+}
+
+data "aws_iam_policy_document" "sftpgo" {
+  statement {
+    sid    = "S3StagingWrite"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:ListBucket",
+      "s3:DeleteObject",
+    ]
+    resources = [
+      var.staging_bucket_arn,
+      "${var.staging_bucket_arn}/*",
+    ]
+  }
+
+  statement {
+    sid    = "KMSEncryptDecrypt"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:Encrypt",
+      "kms:GenerateDataKey",
+      "kms:DescribeKey",
+    ]
+    resources = [var.staging_key_arn]
+  }
+
+  statement {
+    sid    = "CloudWatchLogs"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:aws:logs:${var.aws_region}:${var.aws_account_id}:*"]
   }
 }
 

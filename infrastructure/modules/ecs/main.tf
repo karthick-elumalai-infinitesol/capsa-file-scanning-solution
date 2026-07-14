@@ -211,6 +211,134 @@ resource "aws_ecs_service" "redis" {
 }
 
 # ============================================================================
+# CloudWatch Log Group for SFTPGo
+# ============================================================================
+
+resource "aws_cloudwatch_log_group" "sftpgo" {
+  name              = var.log_group_names["sftpgo"]
+  retention_in_days = 30
+  tags = {
+    Name        = var.log_group_names["sftpgo"]
+    Environment = var.environment
+  }
+}
+
+# ============================================================================
+# SFTPGo Task Definition & Service
+# ============================================================================
+
+resource "aws_ecs_task_definition" "sftpgo" {
+  family                   = var.ecs_names["task_sftpgo"]
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.sftpgo_cpu
+  memory                   = var.sftpgo_memory
+  execution_role_arn       = var.ecs_task_execution_role_arn
+  task_role_arn            = var.sftpgo_task_role_arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "sftpgo"
+      image     = var.sftpgo_image
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = 2022
+          protocol      = "tcp"
+        },
+        {
+          containerPort = 8080
+          protocol      = "tcp"
+        },
+      ]
+
+      environment = [
+        { name = "SFTPGO_DATA_PROVIDER__CREATE_DEFAULT_ADMIN", value = "true" },
+        { name = "SFTPGO_DEFAULT_ADMIN_USERNAME", value = "admin" },
+        { name = "SFTPGO_SFTPD__BINDINGS__0__PORT", value = "2022" },
+        { name = "SFTPGO_SFTPD__BINDINGS__0__HOST", value = "0.0.0.0" },
+        { name = "SFTPGO_HTTPD__BINDINGS__0__PORT", value = "8080" },
+        { name = "SFTPGO_DATA_PROVIDER__DRIVER", value = "bolt" },
+        { name = "SFTPGO_DATA_PROVIDER__BOLTDB__PATH", value = "/srv/sftpgo/sftpgo.db" },
+        { name = "SFTPGO_S3_PROVIDER__BUCKET", value = var.staging_bucket_name },
+        { name = "SFTPGO_S3_PROVIDER__REGION", value = var.aws_region },
+        { name = "SFTPGO_S3_PROVIDER__KEY_PREFIX", value = "" },
+        { name = "SFTPGO_S3_PROVIDER__UPLOAD_MODE", value = "1" },
+        { name = "SFTPGO_COMMON__UPLOAD_MODE", value = "2" },
+        { name = "SFTPGO_COMMON__TEMP_PATH", value = "/tmp" },
+        { name = "TMPDIR", value = "/tmp" },
+      ]
+
+      secrets = [
+        {
+          name      = "SFTPGO_DEFAULT_ADMIN_PASSWORD"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:capsa/sftpgo-admin-password"
+        },
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.sftpgo.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "sftpgo"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "sftpgo ping || exit 1"]
+        interval    = 15
+        timeout     = 5
+        retries     = 5
+        startPeriod = 30
+      }
+
+      linuxParameters = {
+        capabilities = {
+          drop = ["ALL"]
+        }
+      }
+
+      readonlyRootFilesystem = false
+    },
+  ])
+
+  tags = {
+    Name        = var.ecs_names["task_sftpgo"]
+    Environment = var.environment
+  }
+}
+
+resource "aws_ecs_service" "sftpgo" {
+  name                              = var.ecs_names["service_sftpgo"]
+  cluster                           = aws_ecs_cluster.main.id
+  task_definition                   = aws_ecs_task_definition.sftpgo.arn
+  desired_count                     = 1
+  launch_type                       = "FARGATE"
+  health_check_grace_period_seconds = 60
+  enable_execute_command            = false
+
+  network_configuration {
+    subnets          = var.subnet_ids
+    security_groups  = [var.sftpgo_sg_id]
+    assign_public_ip = var.ecs_assign_public_ip
+  }
+
+  dynamic "service_registries" {
+    for_each = var.service_discovery_sftpgo_id != "" ? [1] : []
+    content {
+      registry_arn = var.service_discovery_sftpgo_id
+    }
+  }
+
+  tags = {
+    Name        = var.ecs_names["service_sftpgo"]
+    Environment = var.environment
+  }
+}
+
+# ============================================================================
 # Queue Worker Task Definition & Service
 # ============================================================================
 
@@ -319,4 +447,9 @@ output "cluster_arn" {
 output "clamav_task_definition_arn" {
   value       = aws_ecs_task_definition.clamav.arn
   description = "ClamAV task definition ARN"
+}
+
+output "sftpgo_task_definition_arn" {
+  value       = aws_ecs_task_definition.sftpgo.arn
+  description = "SFTPGo task definition ARN"
 }

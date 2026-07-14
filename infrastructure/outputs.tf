@@ -52,3 +52,23 @@ output "clamav_dns_name" {
   value       = module.networking.clamav_dns_name
   description = "DNS name for ClamAV service discovery"
 }
+
+output "sftpgo_dns_name" {
+  value       = module.networking.sftpgo_dns_name
+  description = "DNS name for SFTPGo service discovery"
+}
+
+output "sftpgo_security_group_id" {
+  value       = module.networking.sftpgo_service_sg_id
+  description = "Security group ID for SFTPGo"
+}
+
+output "sftpgo_task_definition_arn" {
+  value       = module.ecs.sftpgo_task_definition_arn
+  description = "SFTPGo ECS task definition ARN"
+}
+
+output "sftpgo_admin_secret_arn" {
+  value       = module.security.sftpgo_admin_secret_arn
+  description = "ARN of SFTPGo admin password in Secrets Manager"
+}

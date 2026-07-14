@@ -29,3 +29,9 @@ variable "aws_account_id" {
   description = "AWS account ID"
   type        = string
 }
+
+variable "sftpgo_admin_password" {
+  description = "SFTPGo admin password (stored in Secrets Manager)"
+  type        = string
+  sensitive   = true
+}

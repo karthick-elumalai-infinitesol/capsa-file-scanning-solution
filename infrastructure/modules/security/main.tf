@@ -76,6 +76,25 @@ data "aws_iam_policy_document" "kms_quarantine" {
 }
 
 # ============================================================================
+# Secrets Manager — SFTPGo Admin Password
+# ============================================================================
+
+resource "aws_secretsmanager_secret" "sftpgo_admin" {
+  name                    = "capsa/sftpgo-admin-password"
+  description             = "SFTPGo admin password for REST API authentication"
+  recovery_window_in_days = 0
+  tags = {
+    Name        = "capsa-sftpgo-admin-password"
+    Environment = var.environment
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "sftpgo_admin" {
+  secret_id     = aws_secretsmanager_secret.sftpgo_admin.id
+  secret_string = var.sftpgo_admin_password
+}
+
+# ============================================================================
 # GuardDuty
 # ============================================================================
 

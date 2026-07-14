@@ -22,6 +22,7 @@ locals {
     report_generator = "${local.prefix}-lambda-report-generator-role"
     ecs_execution    = "${local.prefix}-ecs-task-execution-role"
     ecs_task         = "${local.prefix}-ecs-task-role"
+    sftpgo           = "${local.prefix}-sftpgo-task-role"
   }
 
   ecs = {
@@ -29,12 +30,15 @@ locals {
     service_clamav   = "${local.prefix}-clamav-service"
     service_worker   = "${local.prefix}-queue-worker-service"
     service_redis    = "${local.prefix}-redis-service"
+    service_sftpgo   = "${local.prefix}-sftpgo-service"
     task_clamav      = "${local.prefix}-clamav-task"
     task_worker      = "${local.prefix}-queue-worker-task"
     task_redis       = "${local.prefix}-redis-task"
+    task_sftpgo      = "${local.prefix}-sftpgo-task"
     log_group_clamav = "/ecs/${local.prefix}-clamav"
     log_group_worker = "/ecs/${local.prefix}-queue-worker"
     log_group_redis  = "/ecs/${local.prefix}-redis"
+    log_group_sftpgo = "/ecs/${local.prefix}-sftpgo"
   }
 
   sns_topic = "${local.prefix}-security-alerts"
@@ -50,6 +54,7 @@ locals {
     clamav       = "/ecs/${local.prefix}-clamav"
     worker       = "/ecs/${local.prefix}-queue-worker"
     redis        = "/ecs/${local.prefix}-redis"
+    sftpgo       = "/ecs/${local.prefix}-sftpgo"
   }
   service_discovery_namespace = "${var.application}.internal"
   service_discovery_service   = "${var.application}-clamav"

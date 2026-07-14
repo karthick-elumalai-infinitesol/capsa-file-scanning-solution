@@ -15,6 +15,7 @@ class S3Client:
             region_name=self.settings.aws_region,
             aws_access_key_id=self.settings.aws_access_key_id or None,
             aws_secret_access_key=self.settings.aws_secret_access_key or None,
+            aws_session_token=self.settings.aws_session_token or None,
         )
 
     def list_objects(self, bucket: str, prefix: str = "", max_keys: int = None) -> Generator[dict, None, None]:

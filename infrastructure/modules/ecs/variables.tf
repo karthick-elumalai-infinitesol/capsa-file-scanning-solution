@@ -41,7 +41,7 @@ variable "ecs_task_role_arn" {
 variable "clamav_image" {
   description = "ClamAV Docker image"
   type        = string
-  default     = "clamav/clamav:1.5.2-debian13-slim"
+    default     = "203733861310.dkr.ecr.us-east-2.amazonaws.com/capsa/clamav:1.5.2-debian13-slim-amd64"
 }
 
 variable "scanner_image" {
@@ -53,7 +53,7 @@ variable "scanner_image" {
 variable "redis_image" {
   description = "Redis Docker image"
   type        = string
-  default     = "redis:7-alpine"
+    default     = "203733861310.dkr.ecr.us-east-2.amazonaws.com/capsa/redis:7-alpine-amd64"
 }
 
 variable "clamav_port" {
@@ -142,4 +142,63 @@ variable "aws_region" {
 variable "routing_function_name" {
   description = "Routing engine Lambda function name"
   type        = string
+}
+
+# ── SFTPGo Variables ─────────────────────────────────────────────────────
+
+variable "sftpgo_image" {
+  description = "SFTPGo Docker image"
+  type        = string
+    default     = "203733861310.dkr.ecr.us-east-2.amazonaws.com/capsa/sftpgo:v2.7.4-amd64"
+}
+
+variable "sftpgo_port" {
+  description = "SFTPGo SFTP port"
+  type        = number
+  default     = 2022
+}
+
+variable "sftpgo_cpu" {
+  description = "SFTPGo CPU units"
+  type        = number
+  default     = 512
+}
+
+variable "sftpgo_memory" {
+  description = "SFTPGo memory MB"
+  type        = number
+  default     = 1024
+}
+
+variable "sftpgo_sg_id" {
+  description = "Security group ID for SFTPGo service"
+  type        = string
+}
+
+variable "service_discovery_sftpgo_id" {
+  description = "Service discovery service ARN for SFTPGo"
+  type        = string
+  default     = ""
+}
+
+variable "sftpgo_dns_name" {
+  description = "DNS name for SFTPGo"
+  type        = string
+  default     = "sftpgo.capsa.internal"
+}
+
+variable "staging_bucket_name" {
+  description = "Staging S3 bucket name for SFTPGo backend"
+  type        = string
+}
+
+variable "sftpgo_task_role_arn" {
+  description = "ARN of SFTPGo ECS task role (S3 + KMS only)"
+  type        = string
+}
+
+variable "aws_account_id" {
+  description = "AWS account ID for secrets manager ARN"
+  type        = string
+  default     = ""
 }

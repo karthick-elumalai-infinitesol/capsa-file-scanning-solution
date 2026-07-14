@@ -28,6 +28,11 @@ output "quarantine_key_id" {
   description = "ID of quarantine KMS key"
 }
 
+output "sftpgo_admin_secret_arn" {
+  value       = aws_secretsmanager_secret.sftpgo_admin.arn
+  description = "ARN of SFTPGo admin password secret"
+}
+
 output "guardduty_detector_id" {
   value       = try(aws_guardduty_detector.main[0].id, "")
   description = "GuardDuty detector ID"

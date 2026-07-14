@@ -8,6 +8,7 @@ import boto3
 from src.config import get_settings
 from src.integrations.clamav import ClamAVClient
 from src.integrations.virustotal import VirusTotalClient
+from src.integrations.nsrl import NSRLClient
 from src.integrations.defectdojo import DefectDojoClient
 from src.integrations.aws_guardduty import GuardDutyClient
 from src.integrations.aws_inspector import InspectorClient
@@ -31,6 +32,7 @@ class ConcurrentScanner:
         self.defectdojo_client = DefectDojoClient() if self.settings.defectdojo_url else None
         self.guardduty_client = GuardDutyClient() if self.settings.aws_guardduty_enabled else None
         self.inspector_client = InspectorClient() if self.settings.aws_inspector_enabled else None
+        self.nsrl_client = NSRLClient()
         self.queue = create_queue()
         self.metrics = ScanMetricsCollector()
         self.detection_callback = detection_callback
@@ -136,15 +138,28 @@ class ConcurrentScanner:
         """
         detections = {}
 
+        if self.nsrl_client:
+            try:
+                nsrl_result = self.nsrl_client.lookup_hash(file_hashes.sha256 or file_hashes.md5 or "")
+                if nsrl_result:
+                    detections["nsrl"] = DetectionResult(
+                        engine="nsrl",
+                        category="known_good",
+                        result=f"NSRL known good: {nsrl_result.get('product_name', 'NIST')}",
+                    )
+            except Exception as exc:
+                logger.debug("NSRL lookup skipped: %s", exc)
+
         clamav_detections = self.clamav_client.scan_bytes(file_bytes)
         if clamav_detections and not any(
             detection.category == "error" for detection in clamav_detections.values()
         ):
             detections.update(clamav_detections)
 
-        if file_hashes.sha256:
+        if file_hashes.sha256 and "nsrl" not in detections:
             virustotal_detections = self.virustotal_client.get_detections(file_hashes.sha256)
-            detections.update(virustotal_detections)
+            if virustotal_detections:
+                detections.update(virustotal_detections)
 
         if self.guardduty_client and bucket and key:
             try:
@@ -158,6 +173,20 @@ class ConcurrentScanner:
                     )
             except Exception as exc:
                 logger.debug("GuardDuty correlation skipped: %s", exc)
+
+        if self.inspector_client and self.inspector_client.is_available():
+            try:
+                ins_findings = self.inspector_client.get_vulnerability_findings(
+                    max_results=5, severity="CRITICAL", hours_back=24
+                )
+                if ins_findings:
+                    detections["inspector"] = DetectionResult(
+                        engine="inspector",
+                        category="vulnerability",
+                        result=f"Inspector: {len(ins_findings)} critical vulns",
+                    )
+            except Exception as exc:
+                logger.debug("Inspector correlation skipped: %s", exc)
 
         return detections
 

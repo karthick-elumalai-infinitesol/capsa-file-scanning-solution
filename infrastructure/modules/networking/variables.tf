@@ -38,3 +38,9 @@ variable "clamav_port" {
   type        = number
   default     = 3310
 }
+
+variable "sftpgo_port" {
+  description = "SFTPGo SFTP port"
+  type        = number
+  default     = 2022
+}

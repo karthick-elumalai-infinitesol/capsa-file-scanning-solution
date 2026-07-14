@@ -1,11 +1,16 @@
+import base64
+import csv
+import io
 import json
 import os
 import subprocess
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+import boto3
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,12 +24,41 @@ SCRIPT_PATH = APP_ROOT / "scripts" / "performance_large_scan_aws.sh"
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 AWS_ACCOUNT_ID = os.getenv("AWS_ACCOUNT_ID", "203733861310")
+STAGING_BUCKET = os.getenv("AWS_STAGING_BUCKET", "")
+CLEAN_BUCKET = os.getenv("AWS_CLEAN_BUCKET", "")
+QUARANTINE_BUCKET = os.getenv("AWS_QUARANTINE_BUCKET", "")
+
+SFTPGO_URL = os.getenv("SFTPGO_URL", "http://localhost:8090")
+SFTPGO_ADMIN_USER = os.getenv("SFTPGO_ADMIN_USER", "admin")
+SFTPGO_ADMIN_PASSWORD = os.getenv("SFTPGO_ADMIN_PASSWORD", "change-me-in-production")
+
+
+def _sftpgo_token() -> str:
+    auth = base64.b64encode(f"{SFTPGO_ADMIN_USER}:{SFTPGO_ADMIN_PASSWORD}".encode()).decode()
+    req = urllib.request.Request(
+        f"{SFTPGO_URL}/api/v2/token",
+        headers={"Authorization": f"Basic {auth}"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode())["access_token"]
+
+
+def _sftpgo_get(path: str) -> dict:
+    token = _sftpgo_token()
+    req = urllib.request.Request(
+        f"{SFTPGO_URL}{path}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode())
 
 RESULTS_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="OpenSecOps Analyzer - File Scan Dashboard")
 app.mount("/static", StaticFiles(directory=str(APP_ROOT / "dashboard_ui" / "static")), name="static")
 templates = Jinja2Templates(directory=str(APP_ROOT / "dashboard_ui" / "templates"))
+
+s3_client = boto3.client("s3", region_name=AWS_REGION) if AWS_REGION else None
 
 
 def now_utc() -> str:
@@ -148,8 +182,9 @@ def run_perf_script(run_id: str, file_count: int, file_size_mb: int, wait_timeou
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
     return templates.TemplateResponse(
+        request,
         "index.html",
-        {"request": request, "aws_region": AWS_REGION, "aws_account_id": AWS_ACCOUNT_ID},
+        {"aws_region": AWS_REGION, "aws_account_id": AWS_ACCOUNT_ID},
     )
 
 
@@ -163,6 +198,123 @@ def scan_runs():
         "metrics": calculate_metrics(runs),
         "runs": list(reversed(runs[-25:])),
     })
+
+
+@app.get("/api/aws/buckets")
+def aws_buckets():
+    buckets = {}
+    for zone, bucket_name in [("staging", STAGING_BUCKET), ("clean", CLEAN_BUCKET), ("quarantine", QUARANTINE_BUCKET)]:
+        if not bucket_name:
+            buckets[zone] = {"bucket": "", "object_count": 0, "size_bytes": 0}
+            continue
+        try:
+            total_size = 0
+            count = 0
+            paginator = s3_client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=bucket_name):
+                count += len(page.get("Contents", []))
+                total_size += sum(obj.get("Size", 0) for obj in page.get("Contents", []))
+            buckets[zone] = {"bucket": bucket_name, "object_count": count, "size_bytes": total_size}
+        except Exception as exc:
+            buckets[zone] = {"bucket": bucket_name, "object_count": 0, "size_bytes": 0, "error": str(exc)}
+    return JSONResponse({"buckets": buckets})
+
+
+@app.get("/api/aws/quarantine-files")
+def quarantine_files(max_items: int = 50):
+    if not QUARANTINE_BUCKET:
+        return JSONResponse({"files": [], "total": 0})
+    try:
+        files = []
+        paginator = s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=QUARANTINE_BUCKET, PaginationConfig={"MaxItems": max_items}):
+            for obj in page.get("Contents", []):
+                tags_resp = s3_client.get_object_tagging(Bucket=QUARANTINE_BUCKET, Key=obj["Key"])
+                tags = {t["Key"]: t["Value"] for t in tags_resp.get("TagSet", [])}
+                files.append({
+                    "key": obj["Key"],
+                    "size": obj["Size"],
+                    "last_modified": str(obj["LastModified"]),
+                    "tags": tags,
+                })
+        return JSONResponse({"files": files, "total": len(files)})
+    except Exception as exc:
+        return JSONResponse({"files": [], "total": 0, "error": str(exc)})
+
+
+@app.get("/api/aws/detection-summary")
+def detection_summary():
+    if not QUARANTINE_BUCKET:
+        return JSONResponse({"by_threat": {}, "by_company": {}, "total_quarantined": 0})
+    try:
+        by_threat = {}
+        by_company = {}
+        total = 0
+        paginator = s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=QUARANTINE_BUCKET):
+            for obj in page.get("Contents", []):
+                total += 1
+                tags_resp = s3_client.get_object_tagging(Bucket=QUARANTINE_BUCKET, Key=obj["Key"])
+                tags = {t["Key"]: t["Value"] for t in tags_resp.get("TagSet", [])}
+                threat = tags.get("scan:threat-name", "UNKNOWN")
+                company = tags.get("source:company", "UNKNOWN")
+                by_threat[threat] = by_threat.get(threat, 0) + 1
+                by_company[company] = by_company.get(company, 0) + 1
+        return JSONResponse({"by_threat": by_threat, "by_company": by_company, "total_quarantined": total})
+    except Exception as exc:
+        return JSONResponse({"by_threat": {}, "by_company": {}, "total_quarantined": 0, "error": str(exc)})
+
+
+@app.get("/api/sftp/status")
+def sftp_status():
+    try:
+        status = _sftpgo_get("/api/v2/status")
+        version_info = _sftpgo_get("/api/v2/version")
+        connections = _sftpgo_get("/api/v2/connections")
+        users_data = _sftpgo_get("/api/v2/users?limit=100")
+        users = users_data if isinstance(users_data, list) else users_data.get("data", [])
+        return JSONResponse({
+            "status": "online",
+            "version": version_info.get("version", "unknown"),
+            "build_date": version_info.get("build_date", ""),
+            "features": version_info.get("features", []),
+            "commit_hash": version_info.get("commit_hash", ""),
+            "uptime": status.get("uptime", 0),
+            "active_connections": len(connections) if isinstance(connections, list) else 0,
+            "total_users": len(users),
+            "providers": {
+                "s3_bucket": os.getenv("AWS_STAGING_BUCKET", ""),
+                "s3_region": os.getenv("AWS_REGION", ""),
+            },
+        })
+    except Exception as exc:
+        return JSONResponse({"status": "offline", "error": str(exc)})
+
+
+@app.get("/api/sftp/users")
+def sftp_users():
+    try:
+        users_data = _sftpgo_get("/api/v2/users?limit=100")
+        users = users_data if isinstance(users_data, list) else users_data.get("data", [])
+        return JSONResponse({"users": users})
+    except Exception as exc:
+        return JSONResponse({"users": [], "error": str(exc)})
+
+
+@app.get("/api/report/csv")
+def download_csv():
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["run_id", "status", "file_count", "file_size_mb", "total_size_mb",
+                     "duration_seconds", "started_at", "completed_at", "return_code"])
+    for run in load_runs():
+        writer.writerow([
+            run.get("run_id"), run.get("status"), run.get("file_count"),
+            run.get("file_size_mb"), run.get("total_size_mb"),
+            run.get("duration_seconds"), run.get("started_at"),
+            run.get("completed_at"), run.get("return_code"),
+        ])
+    return JSONResponse({"csv": output.getvalue()})
 
 
 @app.post("/api/start-scan")

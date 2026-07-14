@@ -8,6 +8,7 @@ networks:
 volumes:
   clamav-db:
   redis-data:
+  sftpgo-data:
 
 services:
   # ===========================================================================
@@ -81,6 +82,13 @@ services:
       CLAMAV_TIMEOUT: 30
       LOG_LEVEL: INFO
       MAX_WORKERS: 20
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN}"
+      AWS_REGION: "${AWS_REGION}"
+      AWS_STAGING_BUCKET: "${AWS_STAGING_BUCKET}"
+      AWS_CLEAN_BUCKET: "${AWS_CLEAN_BUCKET}"
+      AWS_QUARANTINE_BUCKET: "${AWS_QUARANTINE_BUCKET}"
     ports:
       - "8000:8000"
     volumes:
@@ -175,6 +183,13 @@ services:
       CLAMAV_PORT: 3310
       LOG_LEVEL: INFO
       MAX_WORKERS: 10
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN}"
+      AWS_REGION: "${AWS_REGION}"
+      AWS_STAGING_BUCKET: "${AWS_STAGING_BUCKET}"
+      AWS_CLEAN_BUCKET: "${AWS_CLEAN_BUCKET}"
+      AWS_QUARANTINE_BUCKET: "${AWS_QUARANTINE_BUCKET}"
     command: ["python", "scripts/queue_worker.py", "--batch-size", "50", "--poll-interval", "5"]
     healthcheck:
       disable: true
@@ -195,6 +210,64 @@ services:
           memory: 2G
         reservations:
           memory: 1G
+
+  # ===========================================================================
+  # SFTPGo — Cost-effective SFTP server for partner file uploads
+  # Each partner gets a chroot'd home directory mapped to their S3 staging prefix
+  # REST API available for automated user provisioning (port 8080 admin)
+  # Supports SSH key auth, per-user S3 backends, rate limiting, IP whitelisting
+  # ===========================================================================
+  sftpgo:
+    image: drakkan/sftpgo:v2.7.4
+    container_name: capsa-sftpgo
+    restart: unless-stopped
+    networks:
+      - capsa-network
+    ports:
+      - "2222:2022"
+      - "8090:8080"
+    environment:
+      SFTPGO_DEFAULT_ADMIN_USERNAME: admin
+      SFTPGO_DEFAULT_ADMIN_PASSWORD: "${SFTPGO_ADMIN_PASSWORD:-change-me-in-production}"
+      SFTPGO_SFTPD__BINDINGS__0__PORT: 2022
+      SFTPGO_SFTPD__BINDINGS__0__HOST: 0.0.0.0
+      SFTPGO_HTTPD__BINDINGS__0__PORT: 8080
+      SFTPGO_DATA_PROVIDER__DRIVER: bolt
+      SFTPGO_DATA_PROVIDER__BOLTDB__PATH: /srv/sftpgo/sftpgo.db
+      SFTPGO_DATA_PROVIDER__CREATE_DEFAULT_ADMIN: "true"
+      SFTPGO_S3_PROVIDER__BUCKET: "${AWS_STAGING_BUCKET:-capsa-staging}"
+      SFTPGO_S3_PROVIDER__REGION: "${AWS_REGION:-us-east-2}"
+      SFTPGO_S3_PROVIDER__KEY_PREFIX: ""
+      SFTPGO_SFTPD__PIPEFILE_DIR: /tmp
+      TMPDIR: "/tmp"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN}"
+    volumes:
+      - sftpgo-data:/srv/sftpgo
+      - ./sftpgo.json:/etc/sftpgo/sftpgo.json
+    healthcheck:
+      test: ["CMD", "sftpgo", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          memory: 256M
 
   # ===========================================================================
   # (Optional) DefectDojo — Enterprise vulnerability management

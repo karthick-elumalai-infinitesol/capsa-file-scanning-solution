@@ -10,6 +10,20 @@ __pycache__/
 .pytest_cache/
 .venv/
 .venv*/
+venv/
+
+# macOS
+.DS_Store
+
+# Sensitive files
+cookies.txt
+keys/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 
 # Terraform local/generated files
 **/.terraform/
