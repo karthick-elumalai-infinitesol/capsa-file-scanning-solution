@@ -1,76 +1,195 @@
-# CAPSA — How To Guide
+# CAPSA — Cloud Application Security Analyzer
 
-Cloud Application Security Analyzer (CAPSA) scans S3 files for malware using hash-based detection (VirusTotal + NSRL) and ClamAV, with automatic routing (clean / quarantine) and Jira ticketing.
-
----
-
-## 1. Project Structure
-
-```
-.
-├── src/                  # Python source code (FastAPI app, scanner, integrations)
-├── tests/                # Pytest unit tests
-├── test_dataset/         # Sample EICAR malware + clean files for local testing
-├── infrastructure/       # Terraform (AWS: S3, Lambda, ECS, VPC endpoints, IAM)
-├── lambda_functions/     # Lambda source code (scan_trigger, routing_engine, report_generator)
-├── docker/               # Docker Compose (ClamAV + FastAPI)
-├── dashboard_ui/         # Web dashboard (FastAPI + HTML/JS/CSS)
-├── scripts/              # Utility scripts (deploy, monitor, generate data)
-├── HOW_TO.md             # This file
-├── README.md             # Full project overview
-├── QUICKSTART.md         # Quick start guide
-├── RUN_LOCALLY.md        # Detailed local run instructions
-├── DOWNLOAD_AND_RUN.md   # Download & run guide
-├── DEPLOYMENT_GUIDE.md   # Production deployment guide
-├── requirements.txt      # Python dependencies
-└── .env.example          # Environment template (copy to .env)
-```
+Enterprise file scanning pipeline: files enter via SFTP, are scanned by ClamAV on ECS Fargate, and routed to clean or quarantine buckets with full audit trail.
 
 ---
 
-## 2. Quick Start (Local, No AWS)
+## 1. Architecture
+
+```
+                        ┌─────────────────────────────────────────────────────────────┐
+                        │                     AWS Account 203733861310                 │
+                        │                         Region: us-east-2                   │
+                        │                                                             │
+  ┌──────────┐          │  ┌──────────────┐    ┌─────────────┐    ┌───────────────┐   │
+  │ Partners  │─────────│─→│ S3 Staging   │───→│ Lambda      │───→│ Redis Queue   │   │
+  │ (SFTP)    │  SFTP   │  │ (Inbound)    │    │ scan-trigger│    │ (ECS Fargate) │   │
+  └──────────┘  :2022   │  └──────────────┘    └─────────────┘    └──────┬────────┘   │
+                         │                                               │            │
+                         │                                               ▼            │
+                         │                                        ┌──────────────┐   │
+                         │                                        │ Queue Worker │   │
+                         │                                        │ (ECS Fargate)│   │
+                         │                                        │  + ClamAV    │   │
+                         │                                        └──────┬───────┘   │
+                         │                                               │            │
+                         │                                ┌──────────────┴──────┐    │
+                         │                                ▼                     ▼    │
+                         │                        ┌──────────────┐    ┌──────────────┐│
+                         │                        │ S3 Clean     │    │ S3 Quarantine││
+                         │                        │ (Scanned OK) │    │ (Malware)    ││
+                         │                        └──────────────┘    │ Object Lock  ││
+                         │                                            │ 7yr Retention││
+                         │                                            └──────────────┘│
+                         │                                                             │
+                         │  GuardDuty · CloudTrail · SNS Alerts · KMS Encryption      │
+                         └─────────────────────────────────────────────────────────────┘
+```
+
+### Pipeline Flow
+
+| Step | Component | Action |
+|------|-----------|--------|
+| 1 | SFTPGo (ECS) | Partner uploads file to S3 Staging via SFTP port 2022 |
+| 2 | Lambda (scan-trigger) | S3 event → enqueues object key to Redis |
+| 3 | Queue Worker (ECS) | Pulls from Redis → downloads from S3 → streams to ClamAV |
+| 4 | ClamAV (ECS) | Scans stream for malware signatures |
+| 5 | Lambda (routing-engine) | Clean → S3 Clean bucket; Infected → S3 Quarantine with tags |
+| 6 | SNS | Email alert on threat detection |
+| 7 | Reports | Daily CSV → S3 Reports bucket |
+
+### AWS Resources Deployed
+
+| Resource | Description |
+|----------|-------------|
+| S3 Buckets | `capsa-staging-*`, `capsa-clean-*`, `capsa-quarantine-*`, `capsa-reports-*` |
+| ECS Fargate | ClamAV, Redis, SFTPGo, Queue Worker (4 services, 1 task each) |
+| Lambda | scan-trigger, routing-engine, report-generator |
+| Security | KMS keys, VPC endpoints (S3, Secrets Manager, CloudWatch), GuardDuty, CloudTrail |
+| Networking | Security groups, VPC endpoints, route tables |
+| Monitoring | CloudWatch log groups, SNS alert topic |
+
+---
+
+## 2. File Upload Methods
+
+### Method 1: SFTP (Production — Primary Intake)
+
+Partners upload files via SFTP to port **2022**. SFTPGo writes directly to the S3 staging bucket.
 
 ```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-python test_local.py                          # Scan local test dataset
-pytest tests/ -v                              # Run unit tests
-python -m uvicorn src.main:app --reload       # Start API at localhost:8000
+sftp -P 2022 <partner-username>@<sftp-host>
+put /path/to/file.csv ./incoming/
+```
+
+Each partner has an isolated home directory on S3 (prefix: `partners/<partner-id>/`). Files are automatically picked up by the scan pipeline.
+
+### Method 2: AWS CLI Direct to S3
+
+```bash
+# Upload to staging bucket — pipeline processes automatically
+aws s3 cp file.txt s3://capsa-staging-203733861310/incoming/
+
+# Check results in clean bucket
+aws s3 ls s3://capsa-clean-203733861310/ --recursive
+
+# Check quarantined files
+aws s3 ls s3://capsa-quarantine-203733861310/ --recursive
+```
+
+### Method 3: REST API (Local Dev)
+
+```bash
+# Start the API
+uvicorn src.main:app --reload
+
+# Upload a file for scanning (in-memory scan, no S3 persistence)
+curl -X POST -F "file=@document.pdf" http://localhost:8000/scan/local-file
 ```
 
 ---
 
-## 3. Docker (ClamAV + Scanner)
+## 3. User Dashboard
+
+Access the operations dashboard at **`http://<host>:8000/dashboard`** (or load-balanced URL in production).
+
+### Dashboard Features
+
+| Section | Data Source | What It Shows |
+|---------|------------|---------------|
+| Bucket Cards | S3 API | Object counts and size for staging, clean, quarantine |
+| Throughput | Real-time | Total files processed |
+| SFTP Server | SFTPGo API | Version, uptime, active connections, partner count |
+| Pipeline Flow | Static | Visual 4-step pipeline (Upload → Scan → Route → Report) |
+| Threats Table | S3 quarantine + tags | File name, threat name, partner, batch ID, status |
+| Partners Table | SFTPGo API | Username, company, home dir, auth method |
+| System Health | Composite | SFTPGo, S3, ClamAV, SNS status indicators |
+
+The dashboard auto-refreshes every 10 seconds.
+
+### API Endpoints (used by dashboard)
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/aws/buckets` | S3 bucket object counts and sizes |
+| `GET /api/aws/quarantine-files` | Quarantined files with threat/source tags |
+| `GET /api/aws/detection-summary` | Breakdown by threat name and partner company |
+| `GET /api/sftp/status` | SFTPGo server health |
+| `GET /api/sftp/users` | Provisioned SFTP partner accounts |
+| `GET /api/report/csv` | CSV export of scan performance history |
+
+---
+
+## 4. Quick Start (Local Development)
+
+```bash
+# Python environment
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# Run tests
+pytest tests/ -v
+
+# Start API
+uvicorn src.main:app --reload    # http://localhost:8000
+uvicorn dashboard_ui.app:app --reload --port 8001   # Dashboard at http://localhost:8001/dashboard
+```
+
+### Docker (Local Stack)
 
 ```bash
 cp .env.example .env
 docker compose -f docker/docker-compose.yml up --build
-# API at http://localhost:8000
-# ClamAV at clamav:3310 (inside compose network)
+# Services: API :8000, ClamAV :3310, SFTPGo :2222, Redis :6379
 ```
 
 ---
 
-## 4. AWS Deployment (Terraform)
+## 5. Production Deployment
 
 ### Prerequisites
-- AWS CLI configured with admin credentials
+- AWS CLI configured (admin or sufficient permissions)
 - Terraform >= 1.0
+- Existing VPC with at least 2 private subnets
 
 ### Deploy
 
 ```bash
 cd infrastructure
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values
+# Edit terraform.tfvars: vpc_id, subnet_ids, alert_email
 cd ..
 
-# Plan + Apply
 ./scripts/deploy.sh prod plan
 ./scripts/deploy.sh prod apply
 ```
 
-Creates: S3 buckets (staging, clean, quarantine, reports), Lambda functions (scan trigger, routing engine, report generator), ECS cluster (ClamAV, Redis, SFTPGo, Queue Worker), VPC endpoints, GuardDuty, CloudTrail, SNS alerts.
+### Verify Deployment
+
+```bash
+# Check ECS services are active
+aws ecs describe-services --cluster capsa-prod-clamav-cluster --services capsa-prod-clamav-service
+
+# Upload a test file
+echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/eicar.txt
+aws s3 cp /tmp/eicar.txt s3://capsa-staging-<ACCOUNT_ID>/test/eicar.txt
+
+# Watch it flow through the pipeline
+aws logs tail /aws/lambda/capsa-prod-file-scan-trigger --follow
+
+# Verify quarantine
+aws s3 ls s3://capsa-quarantine-<ACCOUNT_ID>/ --recursive
+```
 
 ### Destroy
 
@@ -80,118 +199,58 @@ Creates: S3 buckets (staging, clean, quarantine, reports), Lambda functions (sca
 
 ---
 
-## 5. API Reference
+## 6. Production Security Checklist
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `/health` | GET | Health check |
-| `/scan/s3-bucket` | POST | Start S3 bucket scan |
-| `/status` | GET | Scan progress |
-| `/results` | GET | Scan results (paginated) |
-| `/results/malware` | GET | Malware detections only |
-| `/generate-test-data` | POST | Generate test data |
-| `/metrics` | GET | Scanner metrics |
-| `/clear-results` | POST | Clear cached results |
-
----
-
-## 6. Testing the Pipeline
-
-### Upload test files to staging bucket:
-
-```bash
-# EICAR (malware)
-echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/eicar.txt
-aws s3 cp /tmp/eicar.txt s3://capsa-staging-<ACCOUNT_ID>/test/eicar.txt
-
-# Clean file
-echo "clean data" > /tmp/clean.txt
-aws s3 cp /tmp/clean.txt s3://capsa-staging-<ACCOUNT_ID>/test/clean.txt
-```
-
-### Check results:
-
-```bash
-# Clean files move here
-aws s3 ls s3://capsa-clean-<ACCOUNT_ID>/ --recursive
-
-# Malware files move here
-aws s3 ls s3://capsa-quarantine-<ACCOUNT_ID>/ --recursive
-```
-
-### Monitor Lambda logs:
-
-```bash
-aws logs tail /aws/lambda/capsa-prod-file-scan-trigger --follow
-aws logs tail /aws/lambda/capsa-prod-file-routing-engine --follow
-```
+- [ ] Use IAM roles (not hardcoded access keys) for all AWS SDK clients
+- [ ] Rotate SFTPGo admin password from default (`change-me-in-production`)
+- [ ] Restrict S3 bucket policies to minimal required principals
+- [ ] Enable S3 Object Lock on quarantine bucket for WORM compliance
+- [ ] Configure VPC flow logs and CloudTrail for audit
+- [ ] Set up CloudWatch alarms for pipeline failures
+- [ ] Use AWS Secrets Manager or Parameter Store for secrets
+- [ ] Enforce TLS 1.2+ on all API endpoints
+- [ ] Regular ClamAV virus definition updates (container auto-pulls on restart)
+- [ ] Disaster recovery: cross-region bucket replication for clean/quarantine
 
 ---
 
-## 7. Configuration
+## 7. Configuration Reference
 
-### .env (local)
+### `.env` (Local Development)
 
-| Variable | Description |
-|---|---|
-| `AWS_ACCESS_KEY_ID` | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
-| `AWS_REGION` | AWS region |
-| `AWS_STAGING_BUCKET` | S3 staging bucket |
-| `AWS_CLEAN_BUCKET` | S3 clean bucket |
-| `AWS_QUARANTINE_BUCKET` | S3 quarantine bucket |
-| `VIRUSTOTAL_API_KEY` | VirusTotal API key |
-| `JIRA_URL` | Jira Cloud URL |
-| `JIRA_API_TOKEN` | Jira API token |
-| `JIRA_PROJECT_KEY` | Jira project key |
-| `MAX_WORKERS` | Scanner threads (default: 20) |
+| Variable | Purpose |
+|----------|---------|
+| `AWS_REGION` | AWS region (default: us-east-2) |
+| `AWS_STAGING_BUCKET` | S3 staging bucket name |
+| `AWS_CLEAN_BUCKET` | S3 clean bucket name |
+| `AWS_QUARANTINE_BUCKET` | S3 quarantine bucket name |
+| `VIRUSTOTAL_API_KEY` | VirusTotal API key (optional) |
+| `SFTPGO_URL` | SFTPGo admin API URL |
+| `SFTPGO_ADMIN_USER` | SFTPGo admin username |
+| `SFTPGO_ADMIN_PASSWORD` | SFTPGo admin password |
 | `LOG_LEVEL` | DEBUG/INFO/WARNING/ERROR |
+| `MAX_WORKERS` | Scanner thread pool size (default: 20) |
 
-### terraform.tfvars
+### `terraform.tfvars` (Production)
 
-| Variable | Description |
-|---|---|
+| Variable | Purpose |
+|----------|---------|
 | `aws_region` | AWS region |
 | `environment` | Environment name (prod/dev) |
 | `vpc_id` | Existing VPC ID |
-| `subnet_ids` | Subnet IDs for Lambda/ECS |
-| `jira_url` | Jira Cloud URL |
-| `jira_api_token` | Jira API token |
-| `alert_email` | SNS alert email |
+| `subnet_ids` | Private subnet IDs for Lambda/ECS |
+| `alert_email` | SNS alert email for threat notifications |
 
 ---
 
 ## 8. Troubleshooting
 
-| Problem | Fix |
-|---|---|
-| Lambda not triggering | Check S3 event notification on staging bucket |
-| Files stuck in staging | Check Lambda logs for errors |
+| Symptom | Check |
+|---------|-------|
+| Files stuck in staging | Lambda logs: `aws logs tail /aws/lambda/capsa-prod-file-scan-trigger` |
+| No S3 event notification | Verify `s3:ObjectCreated:*` events on staging bucket |
+| ECS tasks not starting | Verify VPC/subnet IDs, task role permissions, CloudWatch logs |
 | ClamAV not responding | `aws ecs describe-services --cluster capsa-prod-clamav-cluster --services capsa-prod-clamav-service` |
-| ECS tasks not starting | Check VPC/subnet IDs in terraform.tfvars |
-| GuardDuty not finding threats | Detector ID must match environment |
-| Terraform subnet error | Verify subnet IDs exist in the VPC |
-
----
-
-## 9. Key Commands Reference
-
-```bash
-# Local
-python test_local.py                          # Quick local test
-pytest tests/ -v                              # Unit tests
-python -m uvicorn src.main:app --reload       # API server
-
-# Docker
-docker compose -f docker/docker-compose.yml up --build
-
-# AWS
-aws s3 ls s3://capsa-staging-<ACCOUNT_ID>/    # List staging files
-aws logs tail /aws/lambda/capsa-prod-file-scan-trigger --follow  # Lambda logs
-aws ecs list-tasks --cluster capsa-prod-clamav-cluster            # ECS tasks
-
-# Terraform
-./scripts/deploy.sh prod plan                  # Plan changes
-./scripts/deploy.sh prod apply                 # Apply changes
-./scripts/deploy.sh prod destroy               # Destroy all
-```
+| GuardDuty not detecting | Ensure detector ID matches environment |
+| Dashboard SFTP shows offline | Check `SFTPGO_URL` config, network connectivity to port 8080/8090 |
+| Terraform subnet error | Verify subnet IDs exist in the specified VPC |

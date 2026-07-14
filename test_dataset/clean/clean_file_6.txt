@@ -1,2 +1,0 @@
-This is a clean test file number 6. It contains legitimate data for testing purposes.
-Additional content in clean file 6

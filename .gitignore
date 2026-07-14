@@ -41,3 +41,9 @@ infrastructure/modules/lambda/redis_layer/
 
 # Scan/test outputs
 scan_results/
+
+# Test data
+test_dataset/
+
+# Test scripts with hardcoded secrets
+CAPSA_TEST_SCRIPT.sh
