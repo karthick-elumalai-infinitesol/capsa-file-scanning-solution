@@ -151,10 +151,12 @@ class ConcurrentScanner:
                 logger.debug("NSRL lookup skipped: %s", exc)
 
         clamav_detections = self.clamav_client.scan_bytes(file_bytes)
-        if clamav_detections and not any(
-            detection.category == "error" for detection in clamav_detections.values()
-        ):
-            detections.update(clamav_detections)
+        if clamav_detections:
+            if any(detection.category == "error" for detection in clamav_detections.values()):
+                logger.warning("ClamAV scan error — excluding from verdict: %s",
+                               [v.result for v in clamav_detections.values() if v.category == "error"])
+            else:
+                detections.update(clamav_detections)
 
         if file_hashes.sha256 and "nsrl" not in detections:
             virustotal_detections = self.virustotal_client.get_detections(file_hashes.sha256)

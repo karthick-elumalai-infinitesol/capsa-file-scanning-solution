@@ -99,4 +99,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
 
 STOPSIGNAL SIGTERM
 
+# Default: web API (uvicorn). Override CMD for queue-worker.
 CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "*"]
